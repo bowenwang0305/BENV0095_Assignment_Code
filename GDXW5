@@ -1,0 +1,288 @@
+import os
+os.chdir(r'D:\EDA-Transport\data\archive (2)')
+import pandas as pd
+!pip install geopandas
+import geopandas as gpd
+from shapely.geometry import Point
+import geopandas as gpd
+!pip install contextily
+import contextily as ctx
+import matplotlib.pyplot as plt
+from shapely.geometry import Point
+
+#location analysis
+journeys_df = pd.read_csv(r'D:\EDA-Transport\data\archive (2)\eda-sharing bike.csv')
+stations_df = pd.read_csv(r'D:\EDA-Transport\data\archive (2)\stations.csv')
+gdf_stations = gpd.GeoDataFrame(
+    stations_df,
+    geometry=gpd.points_from_xy(stations_df.Longitude, stations_df.Latitude)
+)
+gdf_stations.crs = "EPSG:4326"
+gdf_stations.plot(marker='*', color='blue', markersize=50)
+
+#Map display
+gdf_stations = gpd.GeoDataFrame(
+    stations_df,
+    geometry=gpd.points_from_xy(stations_df['Longitude'], stations_df['Latitude'])
+)
+gdf_stations.crs = "EPSG:4326"
+
+gdf_stations = gdf_stations.to_crs(epsg=3857)
+
+fig, ax = plt.subplots(figsize=(15, 15))
+gdf_stations.plot(ax=ax, marker='*', color='blue', markersize=30)
+
+ctx.add_basemap(ax, source=ctx.providers.OpenStreetMap.Mapnik)
+
+ax.set_xlim(gdf_stations.geometry.bounds.minx.min() - 1000, gdf_stations.geometry.bounds.maxx.max() + 1000)
+ax.set_ylim(gdf_stations.geometry.bounds.miny.min() - 1000, gdf_stations.geometry.bounds.maxy.max() + 1000)
+
+ax.set_axis_off()
+plt.show()
+
+
+#radius calculation
+gdf_stations = gdf_stations.to_crs(epsg=3857)
+
+center = gdf_stations.unary_union.centroid
+
+gdf_stations['distance_to_center'] = gdf_stations.distance(center)
+
+max_distance = gdf_stations['distance_to_center'].max()
+
+circle = center.buffer(max_distance)
+
+fig, ax = plt.subplots(figsize=(15, 15))
+gdf_stations.plot(ax=ax, marker='*', color='blue', markersize=30)
+
+gpd.GeoSeries([circle]).plot(ax=ax, alpha=0.5, edgecolor='black', facecolor='none')
+
+import contextily as ctx
+ctx.add_basemap(ax, source=ctx.providers.OpenStreetMap.Mapnik)
+
+ax.set_xlim(center.x - max_distance - 1000, center.x + max_distance + 1000)
+ax.set_ylim(center.y - max_distance - 1000, center.y + max_distance + 1000)
+
+ax.set_axis_off()
+
+plt.show()
+
+print(f'The radius of the circle that encloses all the stations is: {max_distance} meters')
+
+Average distance calculation
+from itertools import combinations
+import numpy as np
+from geopy.distance import geodesic
+
+gdf_stations = gdf_stations.to_crs(epsg=4326)
+
+distances = []
+for (idx1, row1), (idx2, row2) in combinations(gdf_stations.iterrows(), 2):
+    coord1 = (row1['Latitude'], row1['Longitude'])
+    coord2 = (row2['Latitude'], row2['Longitude'])
+
+    distance = geodesic(coord1, coord2).meters
+    distances.append(distance)
+
+average_distance = np.mean(distances)
+print(f'Average distance between stations is: {average_distance} meters')
+
+#Flow Calculation
+start_station_counts = journeys_df['Start Station ID'].value_counts()
+
+end_station_counts = journeys_df['End Station ID'].value_counts()
+
+gdf_stations['StartCount'] = gdf_stations['Station ID'].map(start_station_counts).fillna(0)
+gdf_stations['EndCount'] = gdf_stations['Station ID'].map(end_station_counts).fillna(0)
+gdf_stations['TotalFlow'] = gdf_stations['StartCount'] + gdf_stations['EndCount']
+
+fig, ax = plt.subplots(figsize=(15, 15))
+gdf_stations.plot(ax=ax, marker='o', column='TotalFlow', cmap='viridis', 
+                  markersize=20, scheme='quantiles', legend=True)
+
+ctx.add_basemap(ax, source=ctx.providers.OpenStreetMap.Mapnik)
+
+ax.set_xlim(gdf_stations.geometry.bounds.minx.min() - 1000, gdf_stations.geometry.bounds.maxx.max() + 1000)
+ax.set_ylim(gdf_stations.geometry.bounds.miny.min() - 1000, gdf_stations.geometry.bounds.maxy.max() + 1000)
+
+ax.set_axis_off()
+
+ax.get_legend().set_bbox_to_anchor((1, 0.5))
+
+plt.show()
+
+#modelling
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error
+import matplotlib.pyplot as plt
+
+
+
+journeys_df['Start Time'] = pd.to_datetime(journeys_df['Start Year'].astype(str) + '-' +
+                                            journeys_df['Start Month'].astype(str) + '-' +
+                                            journeys_df['Start Date'].astype(str) + ' ' +
+                                            journeys_df['Start Hour'].astype(str) + ':' +
+                                            journeys_df['Start Minute'].astype(str))
+
+journeys_df['Start Day'] = journeys_df['Start Time'].dt.dayofweek
+
+hourly_station_traffic = journeys_df.groupby(['Start Station ID', 'Start Day', 'Start Hour']).size().reset_index(name='Traffic Count')
+
+X = hourly_station_traffic[['Start Station ID', 'Start Day', 'Start Hour']]
+y = hourly_station_traffic['Traffic Count']
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+
+rf_model = RandomForestRegressor(n_estimators=100, random_state=42)
+
+rf_model.fit(X_train, y_train)
+
+y_pred = rf_model.predict(X_test)
+
+rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+print(f'Root Mean Squared Error: {rmse}')
+
+plt.figure(figsize=(10, 6))
+plt.scatter(y_test, y_pred, alpha=0.3)
+plt.plot([y.min(), y.max()], [y.min(), y.max()], 'k--', lw=4)
+plt.xlabel('Actual Traffic Count')
+plt.ylabel('Predicted Traffic Count')
+plt.title('Random Forest Result')
+plt.show()
+
+#Modifications to the model
+
+bike_df = pd.read_csv(r'D:\EDA-Transport\data\archive (2)\eda-sharing bike.csv')
+
+bike_df['Start Time'] = pd.to_datetime(
+    bike_df['Start Year'].astype(str) + '-' +
+    bike_df['Start Month'].astype(str) + '-' +
+    bike_df['Start Date'].astype(str) + ' ' +
+    bike_df['Start Hour'].astype(str) + ':' +
+    bike_df['Start Minute'].astype(str)
+)
+bike_df['Date'] = bike_df['Start Time'].dt.date
+
+bike_df['Start Day'] = bike_df['Start Time'].dt.dayofweek
+
+hourly_traffic = bike_df.groupby(['Start Station ID', 'Date', 'Start Day', 'Start Hour']).size().reset_index(name='Traffic Count')
+
+weather_df = pd.read_csv(r'D:\EDA-Transport\data\archive (5)\london_weather.csv')
+
+weather_df['date'] = pd.to_datetime(weather_df['date'], format='%Y%m%d').dt.date
+
+traffic_weather_df = pd.merge(
+    hourly_traffic,
+    weather_df,
+    how='left',
+    left_on='Date',
+    right_on='date'
+)
+
+assert not traffic_weather_df.empty, 
+
+weather_features = ['cloud_cover', 'sunshine', 'global_radiation', 'max_temp', 'min_temp', 'precipitation']
+
+X = traffic_weather_df[['Start Station ID', 'Start Day', 'Start Hour'] + weather_features]
+y = traffic_weather_df['Traffic Count']
+
+if X.isnull().any().any():
+    X.dropna(inplace=True)  
+
+y = y.reindex(X.index)
+
+X.replace([np.inf, -np.inf], np.nan, inplace=True)
+
+if X.isnull().any().any():
+    X.dropna(inplace=True) 
+    y = y.reindex(X.index)
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+
+rf_model = RandomForestRegressor(n_estimators=100, random_state=42)
+
+rf_model.fit(X_train, y_train)
+
+y_pred = rf_model.predict(X_test)
+
+rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+print(f'Root Mean Squared Error: {rmse}')
+
+plt.figure(figsize=(10, 6))
+plt.scatter(y_test, y_pred, alpha=0.3)
+plt.plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'k--', lw=4)
+plt.xlabel('Actual Traffic Count')
+plt.ylabel('Predicted Traffic Count')
+plt.title('Random Forest Predicted vs Actual Traffic Count')
+plt.show()
+
+import seaborn as sns
+plt.figure(figsize=(10, 6))
+sns.kdeplot(y_test, label='Actual', shade=True)
+sns.kdeplot(y_pred, label='Predicted', shade=True)
+plt.xlabel('Traffic Count')
+plt.title('Density Plot')
+plt.legend()
+plt.show()
+
+station_traffic_total = hourly_traffic.groupby('Start Station ID')['Traffic Count'].sum().reset_index()
+
+print(station_traffic_total)
+
+#projection
+
+weather_data_path = 'D:/EDA-Transport/data/archive (5)/london_weather.csv'  # 请替换为您的文件路径
+weather_df = pd.read_csv(weather_data_path)
+
+weather_df['date'] = pd.to_datetime(weather_df['date'], format='%Y%m%d').dt.date
+
+weather_features = ['cloud_cover', 'sunshine', 'global_radiation', 'max_temp', 'min_temp', 'precipitation']
+
+start_date = datetime.strptime('2017-09-14', '%Y-%m-%d').date()
+end_date = datetime.strptime('2017-09-20', '%Y-%m-%d').date()
+
+def create_optimization_plan(rf_model, stations_df, weather_df, start_date, end_date):
+    date_range = pd.date_range(start_date, end_date)
+    model_input_list = []
+
+    for single_date in date_range:
+        daily_weather = weather_df[weather_df['date'] == single_date].reset_index(drop=True)
+        if daily_weather.empty:
+            continue 
+        for hour in range(24):
+            for station_id in stations_df['Station ID'].unique():
+                weather_data = daily_weather.iloc[0][weather_features].tolist()
+                model_input_list.append([
+                    station_id,
+                    single_date.weekday(),
+                    hour
+                ] + weather_data)
+    
+    columns = ['Start Station ID', 'Start Day', 'Start Hour'] + weather_features
+    
+    model_input_df = pd.DataFrame(model_input_list, columns=columns)
+    
+    model_input_df['Predicted Traffic Count'] = rf_model.predict(model_input_df[columns])
+
+    station_predictions = model_input_df.groupby('Start Station ID')['Predicted Traffic Count'].sum().reset_index()
+    
+    return station_predictions
+
+predictions_df = create_optimization_plan(rf_model, stations_df, weather_df, start_date, end_date)
+
+print(predictions_df)
+
+top_stations = predictions_df.sort_values(by='Predicted Traffic Count', ascending=False)
+
+top_n = 10  
+top_stations = top_stations.head(top_n)
+
+plt.figure(figsize=(12, 8))
+sns.barplot(x='Predicted Traffic Count', y='Start Station ID', data=top_stations, orient='h', palette='Blues_d')
+plt.xlabel('Predicted Traffic Count')
+plt.ylabel('Station ID')
+plt.title('Top Stations by Predicted Traffic Count')
+plt.show()
