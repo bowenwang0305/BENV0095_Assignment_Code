@@ -234,7 +234,7 @@ print(station_traffic_total)
 
 #projection
 
-weather_data_path = 'D:/EDA-Transport/data/archive (5)/london_weather.csv'  # 请替换为您的文件路径
+weather_data_path = 'D:/EDA-Transport/data/archive (5)/london_weather.csv'  
 weather_df = pd.read_csv(weather_data_path)
 
 weather_df['date'] = pd.to_datetime(weather_df['date'], format='%Y%m%d').dt.date
